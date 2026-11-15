@@ -1,0 +1,2 @@
+# GlobalCoin
+Independent Cryptocurrency Blockchain
