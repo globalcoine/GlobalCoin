@@ -22,5 +22,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install cryptography
+
       - name: Run GLOBALCOIN blockchain
         run: python blockchain.py
