@@ -2,8 +2,60 @@
 import hashlib
 import json
 import time
-import math
 import uuid
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey
+)
+from cryptography.hazmat.primitives import serialization
+
+
+class Wallet:
+    def __init__(self):
+        self.private_key = Ed25519PrivateKey.generate()
+        self.public_key = self.private_key.public_key()
+
+    def get_private_key(self):
+        return self.private_key.private_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PrivateFormat.Raw,
+            encryption_algorithm=serialization.NoEncryption()
+        ).hex()
+
+    def get_address(self):
+        public_bytes = self.public_key.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw
+        )
+        return public_bytes.hex()
+
+    def sign_transaction(self, transaction):
+        message = json.dumps(
+            transaction,
+            sort_keys=True,
+            separators=(",", ":")
+        ).encode()
+
+        return self.private_key.sign(message).hex()
+
+    @staticmethod
+    def verify_signature(transaction, signature):
+        try:
+            public_key = Ed25519PublicKey.from_public_bytes(
+                bytes.fromhex(transaction["sender"])
+            )
+
+            message = json.dumps(
+                transaction,
+                sort_keys=True,
+                separators=(",", ":")
+            ).encode()
+
+            public_key.verify(bytes.fromhex(signature), message)
+            return True
+
+        except Exception:
+            return False
 
 
 class Blockchain:
@@ -53,30 +105,36 @@ class Blockchain:
 
         self.chain.append(self.mine_block(genesis))
 
-    def add_transaction(self, sender, recipient, amount):
-        if not isinstance(sender, str) or not sender.strip():
-            raise ValueError("Invalid sender address")
+    def add_transaction(self, wallet, recipient, amount):
+        if not isinstance(wallet, Wallet):
+            raise ValueError("Invalid wallet")
 
         if not isinstance(recipient, str) or not recipient.strip():
-            raise ValueError("Invalid recipient address")
+            raise ValueError("Invalid recipient")
 
         if (
             isinstance(amount, bool)
-            or not isinstance(amount, (int, float))
-            or not math.isfinite(amount)
+            or not isinstance(amount, int)
             or amount <= 0
         ):
-            raise ValueError("Invalid transaction amount")
+            raise ValueError("Amount must be a positive integer")
 
         transaction = {
             "transaction_id": str(uuid.uuid4()),
-            "sender": sender.strip(),
+            "sender": wallet.get_address(),
             "recipient": recipient.strip(),
             "amount": amount,
             "timestamp": int(time.time())
         }
 
+        signature = wallet.sign_transaction(transaction)
+
+        if not Wallet.verify_signature(transaction, signature):
+            raise ValueError("Signature verification failed")
+
+        transaction["signature"] = signature
         self.pending_transactions.append(transaction)
+
         return transaction["transaction_id"]
 
     def mine_pending_transactions(self):
@@ -109,9 +167,25 @@ class Blockchain:
                 if block["previous_hash"] != "0":
                     return False
             else:
-                previous_block = self.chain[index - 1]
+                if block["previous_hash"] != self.chain[index - 1]["hash"]:
+                    return False
 
-                if block["previous_hash"] != previous_block["hash"]:
+            for transaction in block["transactions"]:
+                signature = transaction.get("signature")
+
+                if not signature:
+                    return False
+
+                unsigned_transaction = {
+                    key: value
+                    for key, value in transaction.items()
+                    if key != "signature"
+                }
+
+                if not Wallet.verify_signature(
+                    unsigned_transaction,
+                    signature
+                ):
                     return False
 
         return True
@@ -120,17 +194,21 @@ class Blockchain:
 if __name__ == "__main__":
     globalcoin = Blockchain()
 
+    alice = Wallet()
+    bob = Wallet()
+
     transaction_id = globalcoin.add_transaction(
-        "Alice",
-        "Bob",
+        alice,
+        bob.get_address(),
         10
     )
 
     new_block = globalcoin.mine_pending_transactions()
 
-    print("GLOBALCOIN BLOCKCHAIN")
-    print("---------------------")
+    print("GLOBALCOIN VERSION 3")
+    print("--------------------")
+    print("Alice Wallet:", alice.get_address())
+    print("Bob Wallet:", bob.get_address())
     print("Transaction ID:", transaction_id)
-    print("New Block:", new_block)
     print("Total Blocks:", len(globalcoin.chain))
     print("Blockchain Valid:", globalcoin.is_chain_valid())
