@@ -1,20 +1,19 @@
+
 import hashlib
 import json
 import time
 import math
+import uuid
 
 
 class Blockchain:
-
     def __init__(self, difficulty=3):
         self.difficulty = difficulty
         self.chain = []
         self.pending_transactions = []
-
         self.create_genesis_block()
 
     def calculate_hash(self, block):
-
         data = {
             "index": block["index"],
             "timestamp": block["timestamp"],
@@ -32,7 +31,6 @@ class Blockchain:
         return hashlib.sha256(encoded).hexdigest()
 
     def mine_block(self, block):
-
         target = "0" * self.difficulty
 
         while True:
@@ -45,7 +43,6 @@ class Blockchain:
             block["nonce"] += 1
 
     def create_genesis_block(self):
-
         genesis = {
             "index": 0,
             "timestamp": int(time.time()),
@@ -57,7 +54,6 @@ class Blockchain:
         self.chain.append(self.mine_block(genesis))
 
     def add_transaction(self, sender, recipient, amount):
-
         if not isinstance(sender, str) or not sender.strip():
             raise ValueError("Invalid sender address")
 
@@ -73,17 +69,17 @@ class Blockchain:
             raise ValueError("Invalid transaction amount")
 
         transaction = {
-            "sender": sender,
-            "recipient": recipient,
-            "amount": amount
+            "transaction_id": str(uuid.uuid4()),
+            "sender": sender.strip(),
+            "recipient": recipient.strip(),
+            "amount": amount,
+            "timestamp": int(time.time())
         }
 
         self.pending_transactions.append(transaction)
-
-        return True
+        return transaction["transaction_id"]
 
     def mine_pending_transactions(self):
-
         if not self.pending_transactions:
             return None
 
@@ -96,31 +92,23 @@ class Blockchain:
         }
 
         mined_block = self.mine_block(block)
-
         self.chain.append(mined_block)
         self.pending_transactions = []
 
         return mined_block
 
     def is_chain_valid(self):
-
         for index, block in enumerate(self.chain):
-
             if self.calculate_hash(block) != block["hash"]:
                 return False
 
-            if not block["hash"].startswith(
-                "0" * self.difficulty
-            ):
+            if not block["hash"].startswith("0" * self.difficulty):
                 return False
 
             if index == 0:
-
                 if block["previous_hash"] != "0":
                     return False
-
             else:
-
                 previous_block = self.chain[index - 1]
 
                 if block["previous_hash"] != previous_block["hash"]:
@@ -130,10 +118,9 @@ class Blockchain:
 
 
 if __name__ == "__main__":
-
     globalcoin = Blockchain()
 
-    globalcoin.add_transaction(
+    transaction_id = globalcoin.add_transaction(
         "Alice",
         "Bob",
         10
@@ -143,7 +130,7 @@ if __name__ == "__main__":
 
     print("GLOBALCOIN BLOCKCHAIN")
     print("---------------------")
-
+    print("Transaction ID:", transaction_id)
     print("New Block:", new_block)
     print("Total Blocks:", len(globalcoin.chain))
     print("Blockchain Valid:", globalcoin.is_chain_valid())
