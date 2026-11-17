@@ -3,7 +3,13 @@ import unittest
 import tempfile
 import os
 
-from blockchain import Blockchain, Wallet
+from blockchain import (
+    Blockchain,
+    Wallet,
+    MAX_SUPPLY,
+    BLOCK_REWARD,
+    HALVING_INTERVAL
+)
 
 
 class GlobalCoinSecurityTests(unittest.TestCase):
@@ -11,33 +17,56 @@ class GlobalCoinSecurityTests(unittest.TestCase):
     def setUp(self):
         self.alice = Wallet()
         self.bob = Wallet()
+        self.miner = Wallet()
 
         self.blockchain = Blockchain(
             difficulty=2,
             initial_balances={
                 self.alice.get_address(): 100
-            }
+            },
+            transaction_fee=1
         )
 
+    def test_maximum_supply(self):
+        self.assertEqual(MAX_SUPPLY, 21_000_000)
+        self.assertLessEqual(
+            self.blockchain.get_total_supply(),
+            MAX_SUPPLY
+        )
+
+    def test_block_reward_and_halving(self):
+        self.assertEqual(
+            self.blockchain.get_block_reward(1),
+            BLOCK_REWARD
+        )
+
+        self.assertEqual(
+            self.blockchain.get_block_reward(HALVING_INTERVAL + 1),
+            BLOCK_REWARD // 2
+        )
+
+    def test_invalid_allocation_rejected(self):
+        with self.assertRaises(ValueError):
+            Blockchain(
+                initial_balances={
+                    self.alice.get_address(): MAX_SUPPLY + 1
+                }
+            )
+
     def test_forged_signature_rejected(self):
-        fake_transaction = {
+        transaction = {
             "transaction_id": "fake-transaction",
             "sender": self.bob.get_address(),
             "recipient": self.alice.get_address(),
             "amount": 10,
+            "fee": 1,
             "timestamp": 1000
         }
 
-        # Alice tries to sign a transaction claiming Bob is the sender.
-        fake_signature = self.alice.sign_transaction(
-            fake_transaction
-        )
+        signature = self.alice.sign_transaction(transaction)
 
         self.assertFalse(
-            Wallet.verify_signature(
-                fake_transaction,
-                fake_signature
-            )
+            Wallet.verify_signature(transaction, signature)
         )
 
     def test_overspending_rejected(self):
@@ -45,7 +74,8 @@ class GlobalCoinSecurityTests(unittest.TestCase):
             self.blockchain.add_transaction(
                 self.alice,
                 self.bob.get_address(),
-                101
+                100,
+                fee=1
             )
 
     def test_negative_amount_rejected(self):
@@ -56,6 +86,40 @@ class GlobalCoinSecurityTests(unittest.TestCase):
                 -10
             )
 
+    def test_negative_fee_rejected(self):
+        with self.assertRaises(ValueError):
+            self.blockchain.add_transaction(
+                self.alice,
+                self.bob.get_address(),
+                10,
+                fee=-1
+            )
+
+    def test_transaction_fee(self):
+        self.blockchain.add_transaction(
+            self.alice,
+            self.bob.get_address(),
+            10
+        )
+
+        block = self.blockchain.mine_pending_transactions(
+            self.miner.get_address()
+        )
+
+        self.assertEqual(block["transactions"][0]["fee"], 1)
+        self.assertEqual(
+            self.blockchain.get_balance(self.alice.get_address()),
+            89
+        )
+        self.assertEqual(
+            self.blockchain.get_balance(self.bob.get_address()),
+            10
+        )
+        self.assertEqual(
+            self.blockchain.get_balance(self.miner.get_address()),
+            BLOCK_REWARD + 1
+        )
+
     def test_duplicate_transaction_rejected(self):
         self.blockchain.add_transaction(
             self.alice,
@@ -63,15 +127,12 @@ class GlobalCoinSecurityTests(unittest.TestCase):
             10
         )
 
-        # Simulate a duplicated transaction in a block.
         duplicate = self.blockchain.pending_transactions[0].copy()
-
         self.blockchain.pending_transactions.append(duplicate)
+
         self.blockchain.mine_pending_transactions()
 
-        self.assertFalse(
-            self.blockchain.is_chain_valid()
-        )
+        self.assertFalse(self.blockchain.is_chain_valid())
 
     def test_block_tampering_detected(self):
         self.blockchain.add_transaction(
@@ -82,12 +143,9 @@ class GlobalCoinSecurityTests(unittest.TestCase):
 
         self.blockchain.mine_pending_transactions()
 
-        # Modify a transaction after mining.
         self.blockchain.chain[1]["transactions"][0]["amount"] = 20
 
-        self.assertFalse(
-            self.blockchain.is_chain_valid()
-        )
+        self.assertFalse(self.blockchain.is_chain_valid())
 
     def test_wallet_save_and_restore(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -96,35 +154,29 @@ class GlobalCoinSecurityTests(unittest.TestCase):
 
             self.alice.save(filename, password)
 
-            restored_wallet = Wallet.load(
-                filename,
-                password
-            )
+            restored = Wallet.load(filename, password)
 
             self.assertEqual(
                 self.alice.get_address(),
-                restored_wallet.get_address()
+                restored.get_address()
             )
+
+            with open(filename, encoding="utf-8") as file:
+                contents = file.read()
 
             self.assertNotIn(
                 self.alice.get_private_key(),
-                open(filename, encoding="utf-8").read()
+                contents
             )
 
     def test_wrong_wallet_password_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             filename = os.path.join(directory, "wallet.json")
 
-            self.alice.save(
-                filename,
-                "GlobalCoin-Test-2026"
-            )
+            self.alice.save(filename, "GlobalCoin-Test-2026")
 
             with self.assertRaises(Exception):
-                Wallet.load(
-                    filename,
-                    "Wrong-Password-2026"
-                )
+                Wallet.load(filename, "Wrong-Password-2026")
 
     def test_normal_transaction(self):
         self.blockchain.add_transaction(
@@ -136,22 +188,23 @@ class GlobalCoinSecurityTests(unittest.TestCase):
         self.blockchain.mine_pending_transactions()
 
         self.assertEqual(
-            self.blockchain.get_balance(
-                self.alice.get_address()
-            ),
-            90
+            self.blockchain.get_balance(self.alice.get_address()),
+            89
         )
 
         self.assertEqual(
-            self.blockchain.get_balance(
-                self.bob.get_address()
-            ),
+            self.blockchain.get_balance(self.bob.get_address()),
             10
         )
 
-        self.assertTrue(
-            self.blockchain.is_chain_valid()
+        self.assertTrue(self.blockchain.is_chain_valid())
+
+    def test_mining_without_transactions(self):
+        block = self.blockchain.mine_pending_transactions(
+            self.miner.get_address()
         )
+
+        self.assertIsNone(block)
 
 
 if __name__ == "__main__":
